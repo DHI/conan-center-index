@@ -5,7 +5,7 @@ from conan import ConanFile
 from conan.tools.build import check_min_cppstd
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.env import VirtualBuildEnv
-from conan.tools.files import copy, get, rmdir, save, replace_in_file
+from conan.tools.files import apply_conandata_patches, copy, export_conandata_patches, get, rmdir, save, replace_in_file
 from conan.tools.scm import Version
 
 required_conan_version = ">=1.53.0"
@@ -30,6 +30,9 @@ class LibE57FormatConan(ConanFile):
         "fPIC": True,
     }
 
+    def export_sources(self):
+        export_conandata_patches(self)
+
     def config_options(self):
         if self.settings.os == "Windows":
             del self.options.fPIC
@@ -49,7 +52,7 @@ class LibE57FormatConan(ConanFile):
             check_min_cppstd(self, "11")
 
     def build_requirements(self):
-        self.tool_requires("cmake/[>=3.16.3 <4]")
+        self.tool_requires("cmake/[>=3.16.3]")
 
     def source(self):
         get(self, **self.conan_data["sources"][self.version], strip_root=True)
@@ -61,6 +64,7 @@ class LibE57FormatConan(ConanFile):
         tc.variables["E57_BUILD_SHARED"] = self.options.shared
         tc.variables["E57_BUILD_TEST"] = False
         tc.variables["USING_STATIC_XERCES"] = not self.dependencies["xerces-c"].options.shared
+        tc.cache_variables["CCACHE_PROGRAM"] = "CCACHE_PROGRAM-NOTFOUND" # avoid using ccache if found in PATH
         tc.generate()
         deps = CMakeDeps(self)
         deps.generate()
@@ -73,10 +77,11 @@ class LibE57FormatConan(ConanFile):
             replace_in_file(self, os.path.join(self.source_folder, "cmake", "CompilerWarnings.cmake"),
                             " -W", " # -W")
             # Disable warnings as errors
-            replace_in_file(self, os.path.join(self.source_folder, "CMakeLists.txt"), "set_warning_as_error()", "")
+            replace_in_file(self, os.path.join(self.source_folder, "CMakeLists.txt"), "set_warning_as_error()", "", strict=False)
 
     def build(self):
         self._patch_sources()
+        apply_conandata_patches(self)
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
@@ -115,11 +120,3 @@ class LibE57FormatConan(ConanFile):
         self.cpp_info.libs = [f"E57Format{suffix}"]
         if self.settings.os in ["Linux", "FreeBSD"] and not self.options.shared:
             self.cpp_info.system_libs.extend(["m", "pthread"])
-
-        # TODO: to remove in conan v2 once cmake_find_package* generators removed
-        self.cpp_info.filenames["cmake_find_package"] = "e57format"
-        self.cpp_info.filenames["cmake_find_package_multi"] = "e57format"
-        self.cpp_info.names["cmake_find_package"] = "E57Format"
-        self.cpp_info.names["cmake_find_package_multi"] = "E57Format"
-        self.cpp_info.build_modules["cmake_find_package"] = [self._module_file_rel_path]
-        self.cpp_info.build_modules["cmake_find_package_multi"] = [self._module_file_rel_path]

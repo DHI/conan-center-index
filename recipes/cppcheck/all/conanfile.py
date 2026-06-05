@@ -1,10 +1,9 @@
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
-from conan.tools.files import apply_conandata_patches, copy, export_conandata_patches, get
-from conan.tools.scm import Version
+from conan.tools.files import copy, get
 import os
 
-required_conan_version = ">=1.52.0"
+required_conan_version = ">=2.1"
 
 
 class CppcheckConan(ConanFile):
@@ -23,15 +22,15 @@ class CppcheckConan(ConanFile):
         "have_rules": True,
     }
 
-    def export_sources(self):
-        export_conandata_patches(self)
-
     def layout(self):
         cmake_layout(self, src_folder="src")
 
     def requirements(self):
-        if self.options.get_safe("have_rules"):
+        if self.options.have_rules:
             self.requires("pcre/8.45")
+    
+    def build_requirements(self):
+        self.tool_requires("cmake/[>=3.22]")
 
     def package_id(self):
         del self.info.settings.compiler
@@ -42,11 +41,10 @@ class CppcheckConan(ConanFile):
 
     def generate(self):
         tc = CMakeToolchain(self)
-        tc.variables["HAVE_RULES"] = self.options.get_safe("have_rules", False)
+        tc.variables["HAVE_RULES"] = self.options.have_rules
         tc.variables["USE_MATCHCOMPILER"] = "Auto"
         tc.variables["ENABLE_OSS_FUZZ"] = False
-        if Version(self.version) >= "2.11.0":
-            tc.variables["DISABLE_DMAKE"] = True
+        tc.variables["DISABLE_DMAKE"] = True
         tc.variables["FILESDIR"] = "bin"
         tc.generate()
 
@@ -54,7 +52,6 @@ class CppcheckConan(ConanFile):
         deps.generate()
 
     def build(self):
-        apply_conandata_patches(self)
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
@@ -70,8 +67,5 @@ class CppcheckConan(ConanFile):
         self.cpp_info.libdirs = []
 
         bin_folder = os.path.join(self.package_folder, "bin")
-        self.env_info.PATH.append(bin_folder)
-
         cppcheck_htmlreport = os.path.join(bin_folder, "cppcheck-htmlreport")
-        self.env_info.CPPCHECK_HTMLREPORT = cppcheck_htmlreport
         self.runenv_info.define_path("CPPCHECK_HTMLREPORT", cppcheck_htmlreport)

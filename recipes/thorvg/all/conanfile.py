@@ -36,6 +36,7 @@ class ThorvgConan(ConanFile):
         "with_simd": [True, False],
         "with_examples": [True, False],
         "with_extra": [False, 'lottie_expressions'],
+        "with_file": [True, False],
     }
     default_options = {
         "shared": False,
@@ -49,6 +50,7 @@ class ThorvgConan(ConanFile):
         "with_simd": False,
         "with_examples": False,
         "with_extra": 'lottie_expressions',
+        "with_file": True,
     }
     # See more here: https://github.com/thorvg/thorvg/blob/main/meson_options.txt
     options_description = {
@@ -81,6 +83,8 @@ class ThorvgConan(ConanFile):
     def config_options(self):
         if self.settings.os == "Windows":
             del self.options.fPIC
+        if Version(self.version) < "0.15.6":
+            del self.options.with_file
 
     def configure(self):
         if self.options.shared:
@@ -111,11 +115,11 @@ class ThorvgConan(ConanFile):
     def requirements(self):
         loaders_opt = str(self.options.with_loaders)
         if loaders_opt in ("all", "jpg"):
-            self.requires("libjpeg-turbo/3.0.2")
+            self.requires("libjpeg-turbo/[>=3.0.2 <4]")
         if loaders_opt in ("all", "png"):
-            self.requires("libpng/1.6.43")
+            self.requires("libpng/[>=1.6.43 <2]")
         if loaders_opt in ("all", "webp"):
-            self.requires("libwebp/1.4.0")
+            self.requires("libwebp/[>=1.4.0 <2]")
         if self.settings.os == "Linux":
             if self.options.with_engines in ["gl", "gl_beta"]:
                 self.requires("opengl/system")
@@ -148,6 +152,8 @@ class ThorvgConan(ConanFile):
         tc.project_options["simd"] = bool(self.options.with_simd)
         if self.options.with_extra:
             tc.project_options["extra"] = str(self.options.with_extra)
+        if "with_file" in self.options:
+            tc.project_options["file"] = self.options.with_file
         tc.generate()
         tc = PkgConfigDeps(self)
         tc.generate()

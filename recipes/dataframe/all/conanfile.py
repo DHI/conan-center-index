@@ -15,7 +15,7 @@ class DataFrameConan(ConanFile):
     name = "dataframe"
     description = (
         "C++ DataFrame for statistical, Financial, and ML analysis -- in modern C++ "
-        "using native types, continuous memory storage, and no pointers are involved"
+        "using native types and contiguous memory storage"
     )
     license = "BSD-3-Clause"
     url = "https://github.com/conan-io/conan-center-index"
@@ -96,6 +96,10 @@ class DataFrameConan(ConanFile):
 
     def layout(self):
         cmake_layout(self, src_folder="src")
+
+    def build_requirements(self):
+        if Version(self.version) >= "3.7.0":
+            self.tool_requires("cmake/[>=3.20]")
 
     def validate(self):
         if self.settings.compiler.get_safe("cppstd"):

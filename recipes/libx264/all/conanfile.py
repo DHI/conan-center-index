@@ -1,8 +1,7 @@
 from conan import ConanFile
 from conan.tools.apple import is_apple_os, XCRun, fix_apple_shared_install_name
-from conan.tools.build import cross_building
-from conan.tools.env import Environment, VirtualBuildEnv
-from conan.tools.files import copy, rename, get, rmdir
+from conan.tools.env import Environment
+from conan.tools.files import copy, rename, get, rmdir, chdir
 from conan.tools.gnu import Autotools, AutotoolsToolchain
 from conan.tools.layout import basic_layout
 from conan.tools.microsoft import is_msvc, unix_path
@@ -111,32 +110,6 @@ class LibX264Conan(ConanFile):
             env.define("AS", unix_path(self, os.path.join(self.dependencies.build["nasm"].package_folder, "bin", "nasm{}".format(".exe" if self.settings.os == "Windows" else ""))))
             env.vars(self).save_script("conanbuild_nasm")
 
-        if cross_building(self):
-            if self.settings.os == "Android":
-                buildenv_vars = VirtualBuildEnv(self).vars()
-                ndk_root = self.conf.get("tools.android:ndk_path", buildenv_vars.get("NDK_ROOT"))
-
-                # INFO: Conan package android-ndk does not expose toolchain path. Looks fragile but follows always same for Android NDK
-                build_os = {"Linux": "linux", "Macos": "darwin", "Windows": "windows"}.get(str(self.settings_build.os))
-                toolchain = os.path.join(ndk_root, "toolchains", "llvm", "prebuilt", f"{build_os}-{self.settings_build.arch}")
-
-                sysroot = self.conf.get("tools.build:sysroot", buildenv_vars.get("SYSROOT", f"{toolchain}/sysroot"))
-                # INFO: x264 will look for strings appended to the cross prefix
-                cross_prefix = os.path.join(toolchain, "bin", "llvm-")
-
-                compilers_from_conf = self.conf.get("tools.build:compiler_executables", default={}, check_type=dict)
-
-                args["--build"] = None # --build is not recognized
-                args["--cross-prefix"] = cross_prefix
-                args["--sysroot"] = sysroot
-
-                # the as of ndk does not work well for building libx264
-                env = Environment()
-                cc_as = compilers_from_conf.get("c", buildenv_vars.get("AS", "clang"))
-                env.define("AS", cc_as)
-                env_vars = env.vars(self, scope="build")
-                env_vars.save_script("conanbuild_android")
-
         if is_msvc(self):
             env = Environment()
             env.define("CC", "cl -nologo")
@@ -161,14 +134,16 @@ class LibX264Conan(ConanFile):
         tc.generate()
 
     def build(self):
-        autotools = Autotools(self)
-        autotools.configure()
-        autotools.make()
+        with chdir(self, self.source_folder):
+            autotools = Autotools(self)
+            autotools.configure()
+            autotools.make()
 
     def package(self):
         copy(self, pattern="COPYING", src=self.source_folder, dst=os.path.join(self.package_folder, "licenses"))
-        autotools = Autotools(self)
-        autotools.install()
+        with chdir(self, self.source_folder):
+            autotools = Autotools(self)
+            autotools.install()
         rmdir(self, os.path.join(self.package_folder, "lib", "pkgconfig"))
         if is_msvc(self):
             ext = ".dll.lib" if self.options.shared else ".lib"

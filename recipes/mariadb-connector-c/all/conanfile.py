@@ -5,7 +5,7 @@ from conan.tools.files import apply_conandata_patches, collect_libs, copy, expor
 from conan.tools.scm import Version
 import os
 
-required_conan_version = ">=1.53.0"
+required_conan_version = ">=2.1"
 
 
 class MariadbConnectorcConan(ConanFile):
@@ -64,7 +64,7 @@ class MariadbConnectorcConan(ConanFile):
             self.requires("openssl/[>=1.1 <4]")
         if Version(self.version) >= "3.3":
             # INFO: https://mariadb.com/kb/en/mariadb-connector-c-330-release-notes
-            self.requires("zstd/1.5.5")
+            self.requires("zstd/[>=1.5 <1.6]")
 
     def validate(self):
         if self.settings.os != "Windows" and self.options.with_ssl == "schannel":
@@ -74,6 +74,7 @@ class MariadbConnectorcConan(ConanFile):
 
     def source(self):
         get(self, **self.conan_data["sources"][self.version], strip_root=True)
+        self._patch_sources()
 
     def generate(self):
         tc = CMakeToolchain(self)
@@ -95,6 +96,8 @@ class MariadbConnectorcConan(ConanFile):
         tc.variables["ZLIB_LIBRARY"] = "ZLIB::ZLIB"
         # To install relocatable shared libs on Macos
         tc.cache_variables["CMAKE_POLICY_DEFAULT_CMP0042"] = "NEW"
+        if Version(self.version) < "3.4.4": # pylint: disable=conan-condition-evals-to-constant
+            tc.cache_variables["CMAKE_POLICY_VERSION_MINIMUM"] = "3.5" # CMake 4 support
         tc.generate()
         deps = CMakeDeps(self)
         if Version(self.version) >= "3.3":
@@ -105,7 +108,6 @@ class MariadbConnectorcConan(ConanFile):
         apply_conandata_patches(self)
 
         root_cmake = os.path.join(self.source_folder, "CMakeLists.txt")
-        libmariadb_cmake = os.path.join(self.source_folder, "libmariadb", "CMakeLists.txt")
         replace_in_file(self,
             root_cmake,
             "SET(SSL_LIBRARIES ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY})",
@@ -124,7 +126,6 @@ class MariadbConnectorcConan(ConanFile):
                             "find_package(ZSTD REQUIRED CONFIG)")
 
     def build(self):
-        self._patch_sources()
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
@@ -151,6 +152,3 @@ class MariadbConnectorcConan(ConanFile):
 
         plugin_dir = os.path.join(self.package_folder, "lib", "plugin").replace("\\", "/")
         self.runenv_info.prepend_path("MARIADB_PLUGIN_DIR", plugin_dir)
-
-        # TODO: to remove in conan v2
-        self.env_info.MARIADB_PLUGIN_DIR.append(plugin_dir)

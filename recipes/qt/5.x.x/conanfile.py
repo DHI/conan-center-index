@@ -1,7 +1,7 @@
 from conan import ConanFile, conan_version
 from conan.errors import ConanException, ConanInvalidConfiguration
 from conan.tools.android import android_abi
-from conan.tools.apple import is_apple_os
+from conan.tools.apple import is_apple_os, to_apple_arch
 from conan.tools.build import build_jobs, check_min_cppstd, cross_building
 from conan.tools.env import Environment, VirtualBuildEnv, VirtualRunEnv
 from conan.tools.files import chdir, copy, get, load, replace_in_file, rm, rmdir, save, export_conandata_patches, apply_conandata_patches
@@ -56,7 +56,7 @@ class QtConan(ConanFile):
         "with_libjpeg": ["libjpeg", "libjpeg-turbo", False],
         "with_libpng": [True, False],
         "with_sqlite3": [True, False],
-        "with_mysql": [True, False],
+        "with_mysql": ["mysql", "mariadb", False],
         "with_pq": [True, False],
         "with_odbc": [True, False],
         "with_libalsa": [True, False],
@@ -100,7 +100,7 @@ class QtConan(ConanFile):
         "with_libjpeg": "libjpeg",
         "with_libpng": True,
         "with_sqlite3": True,
-        "with_mysql": True,
+        "with_mysql": "mysql",
         "with_pq": True,
         "with_odbc": True,
         "with_libalsa": False,
@@ -191,7 +191,6 @@ class QtConan(ConanFile):
         if self.settings.compiler in ["gcc", "clang"] and Version(self.settings.compiler.version) < "5.3":
             del self.options.with_mysql
         if self.settings.os == "Windows":
-            self.options.with_mysql = False
             self.options.opengl = "dynamic"
             del self.options.with_gssapi
         if self.settings.os != "Linux":
@@ -355,7 +354,7 @@ class QtConan(ConanFile):
         if self.options.get_safe("with_fontconfig", False) and not self.options.get_safe("with_freetype", False):
             raise ConanInvalidConfiguration("with_fontconfig cannot be enabled if with_freetype is disabled.")
 
-        if not self.options.with_doubleconversion and str(self.settings.compiler.libcxx) != "libc++":
+        if not self.options.with_doubleconversion and self.settings.get_safe("compiler.libcxx") != "libc++":
             raise ConanInvalidConfiguration("Qt without libc++ needs qt:with_doubleconversion. "
                                             "Either enable qt:with_doubleconversion or switch to libc++")
 
@@ -372,10 +371,6 @@ class QtConan(ConanFile):
         if self.options.get_safe("with_pulseaudio", default=False) and not self.dependencies["pulseaudio"].options.with_glib:
             # https://bugreports.qt.io/browse/QTBUG-95952
             raise ConanInvalidConfiguration("Pulseaudio needs to be built with glib option or qt's configure script won't detect it")
-
-        if self.settings.os in ['Linux', 'FreeBSD']:
-            if self.options.with_gssapi:
-                raise ConanInvalidConfiguration("gssapi cannot be enabled until conan-io/conan-center-index#4102 is closed")
 
         if self.options.get_safe("with_x11", False) and not self.dependencies.direct_host["xkbcommon"].options.with_x11:
             raise ConanInvalidConfiguration("The 'with_x11' option for the 'xkbcommon' package must be enabled when the 'with_x11' option is enabled")
@@ -412,20 +407,22 @@ class QtConan(ConanFile):
         if self.options.get_safe("with_icu", False):
             self.requires("icu/74.2")
         if self.options.get_safe("with_harfbuzz", False) and not self.options.multiconfiguration:
-            self.requires("harfbuzz/8.3.0")
+            self.requires("harfbuzz/[>=8.3.0]")
         if self.options.get_safe("with_libjpeg", False) and not self.options.multiconfiguration:
             if self.options.with_libjpeg == "libjpeg-turbo":
                 self.requires("libjpeg-turbo/[>=3.0 <3.1]")
             else:
-                self.requires("libjpeg/9e")
+                self.requires("libjpeg/[>=9e]")
         if self.options.get_safe("with_libpng", False) and not self.options.multiconfiguration:
             self.requires("libpng/[>=1.6 <2]")
         if self.options.with_sqlite3 and not self.options.multiconfiguration:
             self.requires("sqlite3/[>=3.45.0 <4]")
-        if self.options.get_safe("with_mysql", False):
+        if self.options.get_safe("with_mysql", False) == "mysql":
             self.requires("libmysqlclient/8.1.0")
+        if self.options.get_safe("with_mysql", False) == "mariadb":
+            self.requires("mariadb-connector-c/3.3.3")
         if self.options.with_pq:
-            self.requires("libpq/15.4")
+            self.requires("libpq/[>=15.4 <18]")
         if self.options.with_odbc:
             if self.settings.os != "Windows":
                 self.requires("odbc/2.3.11")
@@ -459,11 +456,11 @@ class QtConan(ConanFile):
         if self.options.qtwayland:
             self.requires("wayland/1.22.0")
         if self.settings.os in ['Linux', 'FreeBSD'] and self.options.with_gssapi:
-            self.requires("krb5/1.18.3") # conan-io/conan-center-index#4102
+            self.requires("krb5/1.21.2")
         if self.options.get_safe("with_atspi"):
             self.requires("at-spi2-core/2.51.0")
         if self.options.get_safe("with_md4c", False):
-            self.requires("md4c/0.4.8")
+            self.requires("md4c/[>=0.4.8 <1]")
 
     def package_id(self):
         del self.info.options.cross_compile
@@ -526,7 +523,7 @@ class QtConan(ConanFile):
         ms.generate()
         vbe = VirtualBuildEnv(self)
         vbe.generate()
-        if not cross_building(self):
+        if not cross_building(self,  skip_x64_x86=self.settings.os == "Windows"):
             vre = VirtualRunEnv(self)
             vre.generate(scope="build")
         env = Environment()
@@ -760,6 +757,7 @@ class QtConan(ConanFile):
                   ("libjpeg-turbo", "LIBJPEG"),
                   ("libpng", "LIBPNG"),
                   ("sqlite3", "SQLITE"),
+                  ("mariadb-connector-c", "MYSQL"),
                   ("libmysqlclient", "MYSQL"),
                   ("libpq", "PSQL"),
                   ("odbc", "ODBC"),
@@ -787,12 +785,14 @@ class QtConan(ConanFile):
 
         if "libmysqlclient" in [d.ref.name for d in self.dependencies.direct_host.values()]:
             args.append("-mysql_config \"%s\"" % os.path.join(self.dependencies["libmysqlclient"].package_folder, "bin", "mysql_config"))
+        if "mariadb-connector-c" in [d.ref.name for d in self.dependencies.direct_host.values()]:
+            args.append("-mysql_config \"%s\"" % os.path.join(self.dependencies["mariadb-connector-c"].package_folder, "bin", "mysql_config"))
         if "libpq" in [d.ref.name for d in self.dependencies.direct_host.values()]:
             args.append("-psql_config \"%s\"" % os.path.join(self.dependencies["libpq"].package_folder, "bin", "pg_config"))
         if self.settings.os == "Macos":
             args += ["-no-framework"]
-            if self.settings.arch == "armv8":
-                args.append('QMAKE_APPLE_DEVICE_ARCHS="arm64"')
+            if cross_building(self):
+                args.append(f"QMAKE_APPLE_DEVICE_ARCHS={to_apple_arch(self)}")
         elif self.settings.os == "Android":
             args += [f"-android-ndk-platform android-{self.settings.os.api_level}"]
             args += [f"-android-abis {android_abi(self)}"]
@@ -862,7 +862,7 @@ class QtConan(ConanFile):
         if self.settings.compiler == "apple-clang" and self.options.qtmultimedia:
             # XCode 14.3 finally removes std::unary_function, so compilation fails
             # when using newer SDKs when using C++17 or higher.
-            # This macro re-enables them. Should be safe to pass this macro even 
+            # This macro re-enables them. Should be safe to pass this macro even
             # in earlier versions, as it would have no effect.
             args += ['QMAKE_CXXFLAGS+="-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1"']
 
@@ -1010,12 +1010,12 @@ Prefix = ..""")
             if self.options.gui:
                 _create_private_module("Quick", ["CorePrivate", "GuiPrivate", "QmlPrivate", "Quick"])
 
+        if self.options.qtscxml:
+            _create_private_module("Scxml", ["Scxml", "Qml"])
+
     def package_info(self):
         self.cpp_info.set_property("cmake_file_name", "Qt5")
         self.cpp_info.set_property("pkg_config_name", "qt5")
-
-        self.cpp_info.names["cmake_find_package"] = "Qt5"
-        self.cpp_info.names["cmake_find_package_multi"] = "Qt5"
 
         build_modules = {}
 
@@ -1023,8 +1023,6 @@ Prefix = ..""")
             if component not in build_modules:
                 build_modules[component] = []
             build_modules[component].append(module)
-            self.cpp_info.components[component].build_modules["cmake_find_package"].append(module)
-            self.cpp_info.components[component].build_modules["cmake_find_package_multi"].append(module)
 
         libsuffix = ""
         if self.settings.os == "Android":
@@ -1051,9 +1049,8 @@ Prefix = ..""")
             componentname = f"qt{module}"
             assert componentname not in self.cpp_info.components, f"Module {module} already present in self.cpp_info.components"
             self.cpp_info.components[componentname].set_property("cmake_target_name", f"Qt5::{module}")
+            self.cpp_info.components[componentname].set_property("cmake_target_aliases", [f"Qt::{module}"])
             self.cpp_info.components[componentname].set_property("pkg_config_name", f"Qt5{module}")
-            self.cpp_info.components[componentname].names["cmake_find_package"] = module
-            self.cpp_info.components[componentname].names["cmake_find_package_multi"] = module
             if module.endswith("Private"):
                 libname = module[:-7]
             else:
@@ -1077,8 +1074,7 @@ Prefix = ..""")
             componentname = f"qt{pluginname}"
             assert componentname not in self.cpp_info.components, f"Plugin {pluginname} already present in self.cpp_info.components"
             self.cpp_info.components[componentname].set_property("cmake_target_name", f"Qt5::{pluginname}")
-            self.cpp_info.components[componentname].names["cmake_find_package"] = pluginname
-            self.cpp_info.components[componentname].names["cmake_find_package_multi"] = pluginname
+            self.cpp_info.components[componentname].set_property("cmake_target_aliases", [f"Qt::{pluginname}"])
             if not self.options.shared:
                 self.cpp_info.components[componentname].libs = [libname + libsuffix]
             self.cpp_info.components[componentname].libdirs = [os.path.join("plugins", plugintype)]
@@ -1106,12 +1102,14 @@ Prefix = ..""")
         ]
         self.cpp_info.components["qtCore"].set_property("pkg_config_custom_content", "\n".join(pkg_config_vars))
 
+        if self.settings.build_type != "Debug":
+            self.cpp_info.components['qtCore'].defines.append('QT_NO_DEBUG')
+
         if self.settings.os == "Windows":
             module = "WinMain"
             componentname = f"qt{module}"
             self.cpp_info.components[componentname].set_property("cmake_target_name", f"Qt5::{module}")
-            self.cpp_info.components[componentname].names["cmake_find_package"] = module
-            self.cpp_info.components[componentname].names["cmake_find_package_multi"] = module
+            self.cpp_info.components[componentname].set_property("cmake_target_aliases", [f"Qt::{module}"])
             self.cpp_info.components[componentname].libs = [f"qtmain{libsuffix}"]
             self.cpp_info.components[componentname].includedirs = []
             self.cpp_info.components[componentname].defines = []
@@ -1248,8 +1246,10 @@ Prefix = ..""")
             _create_plugin("QSQLiteDriverPlugin", "qsqlite", "sqldrivers", ["sqlite3::sqlite3"])
         if self.options.with_pq:
             _create_plugin("QPSQLDriverPlugin", "qsqlpsql", "sqldrivers", ["libpq::libpq"])
-        if self.options.get_safe("with_mysql", False):
+        if self.options.get_safe("with_mysql", False) == "mysql":
             _create_plugin("QMySQLDriverPlugin", "qsqlmysql", "sqldrivers", ["libmysqlclient::libmysqlclient"])
+        if self.options.get_safe("with_mysql", False) == "mariadb":
+            _create_plugin("QMySQLDriverPlugin", "qsqlmysql", "sqldrivers", ["mariadb-connector-c::mariadb-connector-c"])
         if self.options.with_odbc:
             if self.settings.os != "Windows":
                 _create_plugin("QODBCDriverPlugin", "qsqlodbc", "sqldrivers", ["odbc::odbc"])
@@ -1273,8 +1273,7 @@ Prefix = ..""")
             _add_build_module("qtQml", self._cmake_qt5_private_file("Qml"))
             _create_module("QmlModels", ["Qml"])
             self.cpp_info.components["qtQmlImportScanner"].set_property("cmake_target_name", "Qt5::QmlImportScanner")
-            self.cpp_info.components["qtQmlImportScanner"].names["cmake_find_package"] = "QmlImportScanner" # this is an alias for Qml and there to integrate with existing consumers
-            self.cpp_info.components["qtQmlImportScanner"].names["cmake_find_package_multi"] = "QmlImportScanner"
+            self.cpp_info.components["qtQmlImportScanner"].set_property("cmake_target_aliases", ["Qt::QmlImportScanner"])
             self.cpp_info.components["qtQmlImportScanner"].requires = _get_corrected_reqs(["Qml"])
             if self.options.gui:
                 _create_module("Quick", ["Gui", "Qml", "QmlModels"])
@@ -1287,8 +1286,7 @@ Prefix = ..""")
 
         if self.options.qttools and self.options.gui and self.options.widgets:
             self.cpp_info.components["qtLinguistTools"].set_property("cmake_target_name", "Qt5::LinguistTools")
-            self.cpp_info.components["qtLinguistTools"].names["cmake_find_package"] = "LinguistTools"
-            self.cpp_info.components["qtLinguistTools"].names["cmake_find_package_multi"] = "LinguistTools"
+            self.cpp_info.components["qtLinguistTools"].set_property("cmake_target_aliases", ["Qt::LinguistTools"])
             _create_module("UiPlugin", ["Gui", "Widgets"])
             self.cpp_info.components["qtUiPlugin"].libs = [] # this is a collection of abstract classes, so this is header-only
             self.cpp_info.components["qtUiPlugin"].libdirs = []
@@ -1367,6 +1365,7 @@ Prefix = ..""")
 
         if self.options.qtscxml:
             _create_module("Scxml", ["Qml"])
+            _add_build_module("qtScxml", self._cmake_qt5_private_file("Scxml"))
 
         if self.options.qtpurchasing:
             _create_module("Purchasing")
@@ -1582,6 +1581,11 @@ Prefix = ..""")
 
     def _gather_libs(self, p):
         libs = ["-l" + i for i in p.cpp_info.aggregated_components().libs + p.cpp_info.aggregated_components().system_libs]
+        if p.ref.name == "libpq" and self.settings.os == "Windows" and Version(p.ref.version) >= "17":
+            # libpq/17.x uses Meson filename conventions, pass full filenames instead of "-l" flags
+            ext = "lib" if p.options.shared else "a"
+            libs = [f"lib{lib}.{ext}" for lib in p.cpp_info.aggregated_components().libs]
+            libs.extend([f"{lib}.lib" for lib in p.cpp_info.aggregated_components().system_libs])
         if is_apple_os(self):
             libs += ["-framework " + i for i in p.cpp_info.aggregated_components().frameworks]
         libs += p.cpp_info.aggregated_components().sharedlinkflags

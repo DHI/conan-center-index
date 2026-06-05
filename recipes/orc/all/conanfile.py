@@ -1,7 +1,6 @@
 import os
 
 from conan import ConanFile
-from conan.errors import ConanInvalidConfiguration
 from conan.tools.build import check_min_cppstd
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.env import VirtualBuildEnv, VirtualRunEnv
@@ -34,20 +33,6 @@ class OrcRecipe(ConanFile):
     }
 
     @property
-    def _min_cppstd(self):
-        return 17
-
-    @property
-    def _compilers_minimum_version(self):
-        return {
-            "Visual Studio": "16",
-            "msvc": "192",
-            "gcc": "8",
-            "clang": "7",
-            "apple-clang": "12",
-        }
-
-    @property
     def _should_patch_thirdparty_toolchain(self):
         return Version(self.version) < "2.0.0"
 
@@ -77,42 +62,37 @@ class OrcRecipe(ConanFile):
         self.requires("zlib/[>=1.2.11 <2]")
         self.requires("zstd/[~1.5]")
 
-    def validate(self):
-        check_min_cppstd(self, self._min_cppstd)
-        minimum_version = self._compilers_minimum_version.get(str(self.settings.compiler), False)
-        if minimum_version and Version(self.settings.compiler.version) < minimum_version:
-            raise ConanInvalidConfiguration(
-                f"{self.ref} requires C++{self._min_cppstd}, which your compiler does not support."
-            )
-
     def build_requirements(self):
+        self.tool_requires("cmake/[>=3.25]")
         self.tool_requires("protobuf/<host_version>")
+
+    def validate(self):
+        check_min_cppstd(self, 17)
 
     def source(self):
         get(self, **self.conan_data["sources"][self.version], strip_root=True)
         self._patch_sources()
 
     def generate(self):
-        VirtualBuildEnv(self).generate()
-        VirtualRunEnv(self).generate(scope="build")
-
         tc = CMakeToolchain(self)
-        tc.variables["ORC_PACKAGE_KIND"] = "conan"
-        tc.variables["BUILD_JAVA"] = False
-        tc.variables["BUILD_CPP_TESTS"] = False
-        tc.variables["BUILD_TOOLS"] = self.options.build_tools
-        tc.variables["BUILD_LIBHDFSPP"] = False
-        tc.variables["BUILD_POSITION_INDEPENDENT_LIB"] = bool(self.options.get_safe("fPIC", True))
-        tc.variables["INSTALL_VENDORED_LIBS"] = False
+        tc.cache_variables["ORC_PACKAGE_KIND"] = "conan"
+        tc.cache_variables["BUILD_JAVA"] = False
+        tc.cache_variables["BUILD_CPP_TESTS"] = False
+        tc.cache_variables["BUILD_TOOLS"] = self.options.build_tools
+        tc.cache_variables["BUILD_LIBHDFSPP"] = False
+        tc.cache_variables["BUILD_POSITION_INDEPENDENT_LIB"] = bool(self.options.get_safe("fPIC", True))
+        tc.cache_variables["INSTALL_VENDORED_LIBS"] = False
         # AVX512 support is determined by ORC_USER_SIMD_LEVEL env var at runtime, defaults to off
-        tc.variables["BUILD_ENABLE_AVX512"] = self.options.get_safe("build_avx512", False)
-        tc.variables["STOP_BUILD_ON_WARNING"] = False
-        tc.variables["CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS"] = True
+        tc.cache_variables["BUILD_ENABLE_AVX512"] = self.options.get_safe("build_avx512", False)
+        tc.cache_variables["STOP_BUILD_ON_WARNING"] = False
+        tc.cache_variables["CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS"] = True
+        # TODO: Remove after migrating to new generator https://github.com/conan-io/conan/issues/12012
+        tc.variables["CMAKE_TRY_COMPILE_CONFIGURATION"] = str(self.settings.build_type)
 
-        protoc_path = os.path.join(self.dependencies["protobuf"].cpp_info.bindir, "protoc")
-        tc.variables["PROTOBUF_EXECUTABLE"] = protoc_path.replace("\\", "/")
-        tc.variables["HAS_POST_2038"] = self.settings.os != "Windows"
-        tc.variables["HAS_PRE_1970"] = self.settings.os != "Windows"
+        protoc_path = os.path.join(self.dependencies.build["protobuf"].cpp_info.bindir, "protoc")
+        tc.cache_variables["PROTOBUF_EXECUTABLE"] = protoc_path.replace("\\", "/")
+        tc.cache_variables["HAS_POST_2038"] = self.settings.os != "Windows"
+        tc.cache_variables["HAS_PRE_1970"] = self.settings.os != "Windows"
         tc.generate()
 
         deps = CMakeDeps(self)
@@ -137,7 +117,8 @@ class OrcRecipe(ConanFile):
         cmake = CMake(self)
         cmake.install()
         rmdir(self, os.path.join(self.package_folder, "share"))
-        if self.settings.os == "Windows" and self.options.shared:
+        rmdir(self, os.path.join(self.package_folder, "lib", "cmake"))
+        if self.settings.os == "Windows" and self.options.shared and Version(self.version) < "2.1.1":
             mkdir(self, os.path.join(self.package_folder, "bin"))
             os.rename(os.path.join(self.package_folder, "lib", "orc.dll"),
                       os.path.join(self.package_folder, "bin", "orc.dll"))

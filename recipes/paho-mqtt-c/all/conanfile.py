@@ -1,9 +1,10 @@
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.files import apply_conandata_patches, export_conandata_patches, get, copy, rm, replace_in_file
+from conan.tools.scm import Version
 import os
 
-required_conan_version = ">=1.53.0"
+required_conan_version = ">=2.1"
 
 
 class PahoMqttcConan(ConanFile):
@@ -70,6 +71,8 @@ class PahoMqttcConan(ConanFile):
             tc.cache_variables["OPENSSL_ROOT_DIR"] = self.dependencies["openssl"].package_folder.replace("\\", "/")
         tc.variables["PAHO_HIGH_PERFORMANCE"] = self.options.high_performance
         tc.cache_variables["CMAKE_POLICY_DEFAULT_CMP0042"] = "NEW"
+        if Version(self.version) < "1.3.14": # pylint: disable=conan-condition-evals-to-constant
+            tc.cache_variables["CMAKE_POLICY_VERSION_MINIMUM"] = "3.5" # CMake 4 support
         tc.generate()
 
         deps = CMakeDeps(self)
@@ -77,9 +80,14 @@ class PahoMqttcConan(ConanFile):
 
     def _patch_source(self):
         apply_conandata_patches(self)
-        replace_in_file(self, os.path.join(self.source_folder, "CMakeLists.txt"),
-                        "SET(CMAKE_MODULE_PATH \"${CMAKE_SOURCE_DIR}/cmake/modules\")",
-                        "LIST(APPEND CMAKE_MODULE_PATH \"${CMAKE_SOURCE_DIR}/cmake/modules\")")
+        if Version(self.version) < "1.3.14": # pylint: disable=conan-condition-evals-to-constant
+            replace_in_file(self, os.path.join(self.source_folder, "CMakeLists.txt"),
+                            "SET(CMAKE_MODULE_PATH \"${CMAKE_SOURCE_DIR}/cmake/modules\")",
+                            "LIST(APPEND CMAKE_MODULE_PATH \"${CMAKE_SOURCE_DIR}/cmake/modules\")")
+        elif Version(self.version) < "1.3.17": # pylint: disable=conan-condition-evals-to-constant
+            replace_in_file(self, os.path.join(self.source_folder, "CMakeLists.txt"),
+                            "set(CMAKE_MODULE_PATH \"${PROJECT_SOURCE_DIR}/cmake/modules\")",
+                            "list(APPEND CMAKE_MODULE_PATH \"${PROJECT_SOURCE_DIR}/cmake/modules\")")
         if not self.options.get_safe("fPIC", True):
             replace_in_file(self, os.path.join(self.source_folder, "src", "CMakeLists.txt"), "POSITION_INDEPENDENT_CODE ON", "")
 
@@ -128,12 +136,6 @@ class PahoMqttcConan(ConanFile):
 
         if self.options.ssl:
             self.cpp_info.components["_paho-mqtt-c"].requires = ["openssl::openssl"]
-
-        # TODO: to remove in conan v2 once cmake_find_package_* generators removed
-        self.cpp_info.names["cmake_find_package"] = "eclipse-paho-mqtt-c"
-        self.cpp_info.names["cmake_find_package_multi"] = "eclipse-paho-mqtt-c"
-        self.cpp_info.components["_paho-mqtt-c"].names["cmake_find_package"] = self._cmake_target
-        self.cpp_info.components["_paho-mqtt-c"].names["cmake_find_package_multi"] = self._cmake_target
         self.cpp_info.components["_paho-mqtt-c"].set_property("cmake_target_name", f"eclipse-paho-mqtt-c::{self._cmake_target}")
 
     @property

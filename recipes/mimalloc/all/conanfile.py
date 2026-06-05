@@ -27,6 +27,8 @@ class MimallocConan(ConanFile):
         "override": [True, False],
         "inject": [True, False],
         "single_object": [True, False],
+        "guarded": [True, False],
+        "win_redirect": [True, False],
     }
     default_options = {
         "shared": False,
@@ -35,6 +37,8 @@ class MimallocConan(ConanFile):
         "override": False,
         "inject": False,
         "single_object": False,
+        "guarded": False,
+        "win_redirect": False,
     }
 
     def export_sources(self):
@@ -43,12 +47,16 @@ class MimallocConan(ConanFile):
     def config_options(self):
         if self.settings.os == "Windows":
             del self.options.fPIC
+        else:
+            del self.options.win_redirect
 
         # single_object and inject are options
         # only when overriding on Unix-like platforms:
         if is_msvc(self):
             del self.options.single_object
             del self.options.inject
+        if Version(self.version) < "2.1.9":
+            del self.options.guarded
 
     def configure(self):
         if self.options.shared:
@@ -68,19 +76,11 @@ class MimallocConan(ConanFile):
             self.options.rm_safe("single_object")
             self.options.rm_safe("inject")
 
+
     def layout(self):
         cmake_layout(self, src_folder="src")
 
     def validate(self):
-        # Currently, mimalloc some version do not work properly with shared MD builds.
-        # https://github.com/conan-io/conan-center-index/pull/10333#issuecomment-1114110046
-        if  Version(self.version) == "1.7.6" and \
-            self.options.shared and \
-            is_msvc(self) and \
-            not is_msvc_static_runtime(self):
-            raise ConanInvalidConfiguration(
-                f"Currently, {self.ref} doesn't work properly with shared MD builds in CCI. Contributions welcomed")
-
         # Shared overriding requires dynamic runtime for MSVC:
         if self.options.override and \
            self.options.shared and \
@@ -89,13 +89,21 @@ class MimallocConan(ConanFile):
             raise ConanInvalidConfiguration(
                 "Dynamic runtime (MD/MDd) is required when using mimalloc as a shared library for override")
 
+        if self.options.get_safe("win_redirect") and not (
+            self.options.override and \
+            self.options.shared and \
+            is_msvc(self) and \
+            not is_msvc_static_runtime(self)):
+            raise ConanInvalidConfiguration(
+                "Windows redirect requires 'override', 'shared' and building against a dynamic runtime (MD/MDd)")
+
         if self.options.override and \
            self.options.get_safe("single_object") and \
            self.options.get_safe("inject"):
             raise ConanInvalidConfiguration("Single object is incompatible with library injection")
 
     def build_requirements(self):
-        self.tool_requires("cmake/[>=3.18 <4]")
+        self.tool_requires("cmake/[>=3.18]")
 
     def source(self):
         get(self, **self.conan_data["sources"][self.version], strip_root=True)
@@ -108,8 +116,9 @@ class MimallocConan(ConanFile):
         tc.variables["MI_BUILD_OBJECT"] = self.options.get_safe("single_object", False)
         tc.variables["MI_OVERRIDE"] = "ON" if self.options.override else "OFF"
         tc.variables["MI_SECURE"] = "ON" if self.options.secure else "OFF"
-        tc.variables["MI_WIN_REDIRECT"] = "OFF"
+        tc.variables["MI_WIN_REDIRECT"] = "ON" if self.options.get_safe("win_redirect") else "OFF"
         tc.variables["MI_INSTALL_TOPLEVEL"] = "ON"
+        tc.variables["MI_GUARDED"] = self.options.get_safe("guarded", False)
         tc.generate()
         venv = VirtualBuildEnv(self)
         venv.generate(scope="build")
@@ -147,8 +156,14 @@ class MimallocConan(ConanFile):
                 copy(self, "mimalloc-redirect.dll",
                     src=os.path.join(self.source_folder, "bin"),
                     dst=os.path.join(self.package_folder, "bin"))
+                copy(self, "minject.exe",
+                    src=os.path.join(self.source_folder, "bin"),
+                    dst=os.path.join(self.package_folder, "bin"))
             elif self.settings.arch == "x86":
                 copy(self, "mimalloc-redirect32.dll",
+                    src=os.path.join(self.source_folder, "bin"),
+                    dst=os.path.join(self.package_folder, "bin"))
+                copy(self, "minject32.exe",
                     src=os.path.join(self.source_folder, "bin"),
                     dst=os.path.join(self.package_folder, "bin"))
 
