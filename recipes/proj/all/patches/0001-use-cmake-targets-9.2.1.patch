@@ -10,3 +10,9 @@
  
  if(NLOHMANN_JSON STREQUAL "external")
    target_compile_definitions(proj PRIVATE EXTERNAL_NLOHMANN_JSON)
+
+--- a/cmake/Ccache.cmake
++++ b/cmake/Ccache.cmake
+@@
+-cmake_minimum_required(VERSION 3.4)
++cmake_minimum_required(VERSION 3.9)
